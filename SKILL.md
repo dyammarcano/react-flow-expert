@@ -45,3 +45,10 @@ Open the one doc that matches the question; cite it in answers.
 - **Measured dimensions are async.** In v12 sizes live in `node.measured.{width,height}` and are filled by a `ResizeObserver` after first paint — they're `undefined` on the first render. Gate layout/fitView on `useNodesInitialized()`; don't read width/height synchronously on mount.
 - **Apply your changes.** Controlled mode requires wiring `onNodesChange`/`onEdgesChange` to `applyNodeChanges`/`applyEdgeChanges`; without it the graph looks frozen.
 - **Prefer source over memory.** When a detail matters, open the matching `reference/NN-*.md` (verified against the pinned versions) rather than recalling API shapes.
+
+## Agents (dispatchable)
+
+| Subagent | Use it to… |
+|----------|-----------|
+| `agents/react-flow-expert.md` | Answer deep React Flow / Svelte Flow questions and **build** features (custom nodes/edges, handles, layout, viewport math) — source-cited. |
+| `agents/react-flow-doctor.md` | **Audit, fix, and drift-check** an existing `@xyflow` project: maps usage, flags the gotchas above (RFD001–013), applies fixes with a reviewable plan, runs the project's typecheck/tests to verify, and writes `REACT-FLOW-AUDIT.md`. Report-only mode for read-only review; drift mode for version/API/best-practice regressions over time. |

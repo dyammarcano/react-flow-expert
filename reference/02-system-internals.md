@@ -232,6 +232,46 @@ Ignores multi-touch residue. If a connection was started and `(closestHandle || 
 ### Framework wiring
 **React** `packages/react/src/components/Handle/index.tsx`: the `Handle` component's `onPointerDown`/`onTouchStart` call `XYHandle.onPointerDown(event.nativeEvent, { ...store-derived params })`. **Svelte** uses the same singleton from `Handle.svelte`/`EdgeReconnectAnchor.svelte`.
 
+### Connection state types
+
+The shape that `updateConnection` streams into the store and that `useConnection`/`onConnectEnd`/`onReconnectEnd` expose. Defined in `packages/system/src/types/general.ts` (not `handles.ts`). `ConnectionState = ConnectionInProgress | NoConnection`; the two variants are discriminated by the `inProgress` literal.
+
+**`NoConnection`** (`types/general.ts:NoConnection`) — every field is the literal `false`/`null`; `initialConnection: NoConnection` is the store's default:
+```ts
+export type NoConnection = {
+  inProgress: false;
+  isValid: null;
+  from: null;
+  fromHandle: null;
+  fromPosition: null;
+  fromNode: null;
+  to: null;
+  toHandle: null;
+  toPosition: null;
+  toNode: null;
+  pointer: null;
+};
+```
+
+**`ConnectionInProgress<NodeType extends InternalNodeBase = InternalNodeBase>`** (`types/general.ts:ConnectionInProgress`) — exact fields (note: `fromHandle`/`from`/`fromPosition`/`fromNode`/`to`/`toPosition`/`pointer` are always set once in progress; only the `to*` *target* fields are nullable when not yet over a valid handle):
+```ts
+export type ConnectionInProgress<NodeType extends InternalNodeBase = InternalNodeBase> = {
+  inProgress: true;
+  isValid: boolean | null;   // true/false when over a handle or within radius, else null
+  from: XYPosition;          // xy start position
+  fromHandle: Handle;        // start handle
+  fromPosition: Position;    // side of the start handle
+  fromNode: NodeType;        // start node
+  to: XYPosition;            // xy end position
+  toHandle: Handle | null;   // end handle (null if not over one)
+  toPosition: Position;      // side of the end handle
+  toNode: NodeType | null;   // end node (null if none)
+  pointer: XYPosition;       // pointer position
+};
+```
+
+**`FinalConnectionState<NodeType extends InternalNodeBase = InternalNodeBase>`** (`types/general.ts:FinalConnectionState`) is simply `Omit<ConnectionState<NodeType>, 'inProgress'>` — the connection state with the discriminant dropped. This is the type handed to `onConnectEnd`/`onReconnectEnd` (see `OnConnectEnd`/`OnReconnectEnd` in the same file), so handlers can read `fromNode`/`toNode`/`isValid` after the gesture ends without a discriminated union.
+
 ---
 
 ## 4. XYResizer — NodeResizer drag math
@@ -362,10 +402,10 @@ So the loop is: **DOM resizes → ResizeObserver fires → `updateNodeInternals`
 | `getConnectedEdges(nodes, edges)` | edges where source or target is in `nodes` |
 | `fitViewport({nodes,width,height,panZoom,minZoom,maxZoom}, options?)` | filters visible nodes (`getFitViewNodes`), `getInternalNodesBounds`, `getViewportForBounds`, then `panZoom.setViewport(...)` with duration/ease/interpolate — the engine behind `fitView()` |
 | `calculateNodePosition({nodeId, nextPosition, nodeLookup, nodeOrigin, nodeExtent, onError})` | **the core position resolver**: resolves parent offset, builds the effective `extent` (parent box for `extent:'parent'`, or parent-relative coordinate extent), `clampPosition`s into it, and returns `{ position (parent-relative, origin-adjusted), positionAbsolute }`. Emits error `005` ("Only child nodes can use a parent extent." — fired when `extent:'parent'` but no `parentNode`) / `015` ("...trying to drag a node that is not initialized..." — fired when `node.measured.width/height` is `undefined`) via `onError` (`constants.ts:error005`/`error015`, thrown at `graph.ts:417`/`graph.ts:441`). Used by `XYDrag.updateNodes`. |
-| `getElementsToRemove({...})` | resolves the actual deletable nodes/edges honoring `onBeforeDelete` |
+| `getElementsToRemove({...})` | **async** (`graph.ts:getElementsToRemove`, signature `{ nodesToRemove, edgesToRemove, nodes, edges, onBeforeDelete? } => Promise<{ nodes, edges }>`). Resolves the *actual* set to delete: (1) skips any node with `deletable === false`, includes a node if its id is in `nodesToRemove` **or** if its `parentId` is already in the matched set (so descendants of a deleted parent are pulled in); (2) from the `deletable !== false` edges it takes `getConnectedEdges(matchingNodes, ...)` (edges attached to removed nodes) **plus** any edge explicitly listed in `edgesToRemove`; (3) if no `onBeforeDelete` hook, returns those two arrays directly; otherwise `await onBeforeDelete({nodes, edges})` — a `boolean` result means delete-all (`true`) or delete-nothing (`false`, returns `{nodes:[],edges:[]}`), and an object result `{nodes, edges}` replaces the sets entirely (lets the hook filter/augment what gets removed). |
 
 ### `utils/store.ts` — store-side helpers
-`adoptUserNodes` (normalizes user nodes into `InternalNodeBase`, seeding `measured`/`handleBounds`/`positionAbsolute`), `updateAbsolutePositions`, `updateNodeInternals` (above), `panBy({delta, panZoom, transform, translateExtent, width, height})` (calls `setViewportConstrained` and reports whether the transform actually changed), `handleExpandParent`, `updateConnectionLookup`. `panBy` is what `XYDrag`/`XYHandle` auto-pan call through the store.
+`adoptUserNodes` (`store.ts:adoptUserNodes`, signature `(nodes, nodeLookup, parentLookup, options?) => { nodesInitialized, hasSelectedNodes }`) **rebuilds** `nodeLookup`/`parentLookup` from the user `nodes` array — it `clear()`s both maps, snapshots the old lookup as `tmpLookup`, then for each user node either reuses the existing internal node (fast path: when `checkEquality` is on and the same `userNode` reference is still present) or constructs a fresh `InternalNodeBase` by merging `options.defaults` + the user node and seeding `measured` (`{width,height}` from `userNode.measured`), `internals.positionAbsolute` (`clampPosition` of origin-adjusted position into the node's `extent`/`nodeExtent`), `internals.handleBounds` (via `parseHandles` — derived from `userNode.handles`, or reset to re-measure when `measured` is cleared), `internals.z` (`calculateZ`, elevating selected nodes by `SELECTED_NODE_Z` when `elevateNodesOnSelect` and not manual z-index mode), and `internals.userNode` (back-reference). Children (`userNode.parentId`) are routed through `updateChildNode` to populate `parentLookup`. Returns `nodesInitialized` (false if any visible node lacks `measured.width/height`) and `hasSelectedNodes`. Options merge over `adoptUserNodesDefaultOptions` (`checkEquality: true`). `parseHandles` defaults handle `width`/`height` to `1`. `updateAbsolutePositions`, `updateNodeInternals` (above), `panBy({delta, panZoom, transform, translateExtent, width, height})` (calls `setViewportConstrained` and reports whether the transform actually changed), `handleExpandParent`, `updateConnectionLookup`. `panBy` is what `XYDrag`/`XYHandle` auto-pan call through the store.
 
 ### Key types
 ```ts

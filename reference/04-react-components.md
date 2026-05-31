@@ -74,13 +74,13 @@ export type EdgeTypes = Record<string, ComponentType<EdgeProps & { data: any; ty
 
 | Prop | Type | Default | Notes |
 |------|------|---------|-------|
-| `nodesDraggable` | `boolean` | `true` (store default) | Global; per-node `draggable` overrides. |
-| `nodesConnectable` | `boolean` | `true` | Global; per-node `connectable` overrides. |
-| `nodesFocusable` | `boolean` | `true` | Tab/Enter focus cycling. |
-| `edgesFocusable` | `boolean` | `true` | |
-| `edgesReconnectable` | `boolean` | `true` | Needs an `onReconnect` handler to actually reconnect. |
-| `elementsSelectable` | `boolean` | `true` | Click-to-select nodes & edges. |
-| `selectNodesOnDrag` | `boolean` | `true` | Select a node when you start dragging it. |
+| `nodesDraggable` | `boolean` | `true` (store, `initialState.ts:118`) | Global; per-node `draggable` overrides. |
+| `nodesConnectable` | `boolean` | `true` (store, `initialState.ts:119`) | Global; per-node `connectable` overrides. |
+| `nodesFocusable` | `boolean` | `true` (store, `initialState.ts:120`) | Tab/Enter focus cycling. |
+| `edgesFocusable` | `boolean` | `true` (store, `initialState.ts:121`) | |
+| `edgesReconnectable` | `boolean` | `true` (store, `initialState.ts:122`) | Needs an `onReconnect` handler to actually reconnect. |
+| `elementsSelectable` | `boolean` | `true` (store, `initialState.ts:123`) | Click-to-select nodes & edges. |
+| `selectNodesOnDrag` | `boolean` | `true` (store, `initialState.ts:126`) | Select a node when you start dragging it. |
 | `panOnDrag` | `boolean \| number[]` | `true` | `true` = left-drag pans. Array limits mouse buttons, e.g. `[0,2]` (left+right), `[1]` (middle). |
 | `panOnScroll` | `boolean` | `false` | Scroll-to-pan (trackpad). |
 | `panOnScrollSpeed` | `number` | `0.5` | |
@@ -95,11 +95,11 @@ export type EdgeTypes = Record<string, ComponentType<EdgeProps & { data: any; ty
 | `connectionDragThreshold` | `number` | `1` | Pixels before a connection line starts dragging from a handle. |
 | `paneClickDistance` | `number` | `1` | Max mouse travel between down/up still counted as a click. |
 | `nodeClickDistance` | `number` | `0` | Same, for node clicks. |
-| `autoPanOnNodeDrag` | `boolean` | `true` (store) | Auto-pan when dragging a node to the viewport edge. |
-| `autoPanOnConnect` | `boolean` | `true` (store) | Auto-pan while drawing a connection. |
+| `autoPanOnNodeDrag` | `boolean` | `true` (store, `initialState.ts:140`) | Auto-pan when dragging a node to the viewport edge. |
+| `autoPanOnConnect` | `boolean` | `true` (store, `initialState.ts:139`) | Auto-pan while drawing a connection. |
 | `autoPanOnSelection` | `boolean` | `true` | Auto-pan while drawing a selection box. |
-| `autoPanOnNodeFocus` | `boolean` | `true` | Pan to a node when it receives focus. |
-| `autoPanSpeed` | `number` | `15` | |
+| `autoPanOnNodeFocus` | `boolean` | `true` (store, `initialState.ts:141`) | Pan to a node when it receives focus. |
+| `autoPanSpeed` | `number` | `15` (store, `initialState.ts:142`) | |
 | `onlyRenderVisibleElements` | `boolean` | `false` | Virtualization: only render nodes/edges in viewport. Adds overhead; win only for very large graphs. |
 | `elevateNodesOnSelect` | `boolean` | `true` | Raise z-index of selected nodes. |
 | `elevateEdgesOnSelect` | `boolean` | `false` | Raise z-index of selected edges. |
@@ -109,14 +109,35 @@ export type EdgeTypes = Record<string, ComponentType<EdgeProps & { data: any; ty
 
 | Prop | Type | Default | Notes |
 |------|------|---------|-------|
-| `connectionMode` | `ConnectionMode` | `'strict'` (store) | `Strict='strict'` (source→target only); `Loose='loose'` (also source↔source, target↔target). |
+| `connectionMode` | `ConnectionMode` | `ConnectionMode.Strict` (`'strict'`) (store, `initialState.ts:107`) | `Strict='strict'` (source→target only); `Loose='loose'` (also source↔source, target↔target). |
 | `connectionLineType` | `ConnectionLineType` | `ConnectionLineType.Bezier` (`'default'`) | Path style of the *in-progress* connection line. Enum: `Bezier='default'`, `Straight='straight'`, `Step='step'`, `SmoothStep='smoothstep'`, `SimpleBezier='simplebezier'`. |
 | `connectionLineStyle` | `CSSProperties` | — | Style on the connection line path. |
 | `connectionLineComponent` | `ConnectionLineComponent<NodeType>` | — | Full custom connection-line component (see props below). |
 | `connectionLineContainerStyle` | `CSSProperties` | — | Style on the connection line's SVG container. |
-| `connectionRadius` | `number` | `20` (`@default`; store applies) | Drop radius around a handle that snaps a new edge. |
-| `connectOnClick` | `boolean` | `true` (store) | Click source handle then click target handle to connect (vs. drag-only). Gates `Handle`'s `onClick`. |
+| `connectionRadius` | `number` | `20` (store, `initialState.ts:144`) | Drop radius around a handle that snaps a new edge. |
+| `connectOnClick` | `boolean` | `true` (store, `initialState.ts:136`) | Click source handle then click target handle to connect (vs. drag-only). Gates `Handle`'s `onClick`. |
 | `isValidConnection` | `IsValidConnection<EdgeType>` (`(edge: EdgeType \| Connection) => boolean`) | — | Validate connections globally; return `false` to reject. Preferred over per-handle for perf. |
+
+#### Store-side defaults — byte-confirmed from `store/initialState.ts`
+
+These interaction/connection booleans and numbers have **no destructuring default** in `container/ReactFlow/index.tsx`; their effective default is the value the zustand store is seeded with in `getInitialState()` (`packages/react/src/store/initialState.ts`). Verified verbatim against that file for `@xyflow/react` 12.10.2:
+
+| Prop | Store field (exact source) | Default | `initialState.ts` line |
+|------|----------------------------|---------|------------------------|
+| `nodesDraggable` | `nodesDraggable: true` | `true` | 118 |
+| `nodesConnectable` | `nodesConnectable: true` | `true` | 119 |
+| `nodesFocusable` | `nodesFocusable: true` | `true` | 120 |
+| `edgesFocusable` | `edgesFocusable: true` | `true` | 121 |
+| `edgesReconnectable` | `edgesReconnectable: true` | `true` | 122 |
+| `elementsSelectable` | `elementsSelectable: true` | `true` | 123 |
+| `connectOnClick` | `connectOnClick: true` | `true` | 136 |
+| `connectionMode` | `connectionMode: ConnectionMode.Strict` | `ConnectionMode.Strict` (`'strict'`) | 107 |
+| `connectionRadius` | `connectionRadius: 20` | `20` | 144 |
+| `autoPanOnNodeDrag` | `autoPanOnNodeDrag: true` | `true` | 140 |
+| `autoPanOnConnect` | `autoPanOnConnect: true` | `true` | 139 |
+| `autoPanSpeed` | `autoPanSpeed: 15` | `15` | 142 |
+
+Related store-seeded interaction defaults in the same object (for completeness): `selectNodesOnDrag: true` (126), `elevateNodesOnSelect: true` (124), `elevateEdgesOnSelect: true` (125 — note the store seeds `true`, whereas the component-prop `@default` documented above is `false`; the component supplies its own default), `autoPanOnNodeFocus: true` (141), `nodeDragThreshold: 1` (112), `connectionDragThreshold: 1` (113), `snapGrid: [15, 15]` (115), `snapToGrid: false` (116). These are the *store* seeds, not necessarily the value applied when the prop is omitted from `<ReactFlow>` (a prop with a destructuring default in `index.tsx` overrides the store seed on mount via `<StoreUpdater>`).
 | `onConnect` | `OnConnect` | — | Fires with the new `Connection` when a connection completes. Use `addEdge`. |
 | `onConnectStart` | `OnConnectStart` | — | User begins dragging a connection. |
 | `onConnectEnd` | `OnConnectEnd` | — | Fires regardless of success; 2nd arg `connectionState` lets you branch on failure. |

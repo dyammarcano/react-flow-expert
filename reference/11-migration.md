@@ -272,7 +272,7 @@ updateEdgeData: (id, dataUpdate, options = { replace: false }) => { /* ... */ },
 
 ## 10. `getNodesBounds` signature change
 
-The second parameter changed from a bare `nodeOrigin` value to an `options` object (`migrate-to-v12.mdx` §9).
+The second parameter changed from a bare `nodeOrigin` value to a `params` object (`migrate-to-v12.mdx` §9). The migration guide calls it an "options object"; in the actual source the parameter is named `params` and its `nodeOrigin` field is what the old positional `nodeOrigin` argument became — i.e. `params.nodeOrigin`, not `options.nodeOrigin`.
 
 ```js
 // v11
@@ -280,6 +280,34 @@ const bounds = getNodesBounds(nodes, nodeOrigin);
 // v12
 const bounds = getNodesBounds(nodes, { nodeOrigin });
 ```
+
+### The real v12 signature (copied from source)
+
+`getNodesBounds` lives in `xyflow/packages/system/src/utils/graph.ts:getNodesBounds` (line 195) and is re-exported from `@xyflow/react` via `xyflow/packages/react/src/index.ts:139`. Its JSDoc even notes: *"This function was previously called `getRectOfNodes`"* (`graph.ts:169`).
+
+```ts
+// xyflow/packages/system/src/utils/graph.ts:getNodesBounds
+export const getNodesBounds = <NodeType extends NodeBase = NodeBase>(
+  nodes: (NodeType | InternalNodeBase<NodeType> | string)[],
+  params: GetNodesBoundsParams<NodeType> = { nodeOrigin: [0, 0] }
+): Rect => { /* ... */ };
+
+// xyflow/packages/system/src/utils/graph.ts:GetNodesBoundsParams (line 151)
+export type GetNodesBoundsParams<NodeType extends NodeBase = NodeBase> = {
+  /**
+   * Origin of the nodes: `[0, 0]` for top-left, `[0.5, 0.5]` for center.
+   * @default [0, 0]
+   */
+  nodeOrigin?: NodeOrigin;
+  nodeLookup?: NodeLookup<InternalNodeBase<NodeType>>;
+};
+```
+
+So the v11→v12 change is precisely **positional `nodeOrigin` → `params.nodeOrigin`** (`GetNodesBoundsParams.nodeOrigin`, defaulting to `[0, 0]`). Note three further v12 details from the source:
+
+- The array can now contain **node ids (`string`) or `InternalNodeBase` nodes**, not just plain nodes (`nodes: (NodeType | InternalNodeBase<NodeType> | string)[]`).
+- `params` also accepts an optional **`nodeLookup`**; without it, sub-flow (parent-relative) positions can be wrong, and in development the function `console.warn`s: *"Please use `getNodesBounds` from `useReactFlow`/`useSvelteFlow` hook to ensure correct values for sub flows…"* (`graph.ts:199-203`).
+- That is why `useReactFlow().getNodesBounds(nodes)` takes **only** the nodes array and injects `nodeLookup`/`nodeOrigin` from the store for you (`xyflow/packages/react/src/hooks/useReactFlow.ts:276-279` → `getNodesBounds(nodes, { nodeLookup, nodeOrigin })`; instance type at `xyflow/packages/react/src/types/instance.ts:196`). Prefer the hook form when you have sub-flows.
 
 ---
 
@@ -348,6 +376,8 @@ export type NodeChange<NodeType extends NodeBase = NodeBase> =
   | NodeAddChange<NodeType>
   | NodeReplaceChange<NodeType>; // <-- new in v12 (replaces the old "reset")
 ```
+
+**Confirmed: there is no `"reset"` change type in v12.** Verified against `xyflow/packages/system/src/types/changes.ts:NodeChange` (line 51) — the union has exactly **six** members (the five listed above plus `NodeReplaceChange`), with no `NodeResetChange` and no `type: 'reset'` variant. A full-source search confirms the literal `'reset'` does not appear anywhere in `packages/system/src`, `packages/react/src`, or `packages/svelte/src` as a change type. The `EdgeChange` union (`changes.ts:81`) mirrors this with four members ending in `EdgeReplaceChange` (`changes.ts:67`) — also no `'reset'`. So any v11 code that constructed or matched `{ type: 'reset', ... }` must migrate to the `'replace'` change (`NodeReplaceChange`/`EdgeReplaceChange`, both carrying `id` + `item`).
 
 The built-in `applyNodeChanges` / `applyEdgeChanges` (`xyflow/packages/react/src/utils/changes.ts:182` and `:220`) already handle `'replace'`: the internal `applyChanges` groups `'remove'` and `'replace'` together (`changes.ts:32`), and a leading `'replace'` is special-cased to push a shallow copy of the replacement `item` (`changes.ts:70-73`: `updatedElements.push({ ...changes[0].item })`). If you use the built-ins you get this for free; only hand-rolled appliers need updating. The `'replace'` change itself is produced by the store's diff helper `getElementsDiffChanges` (`changes.ts:300`: `changes.push({ id: item.id, item, type: 'replace' })`), which fires when `setNodes`/`updateNode`/`updateNodeData` push a new-but-same-id object.
 

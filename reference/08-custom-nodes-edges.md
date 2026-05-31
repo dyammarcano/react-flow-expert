@@ -237,6 +237,71 @@ export function getBezierPath({
 
 Return tuple: `[path, labelX, labelY, offsetX, offsetY]`. Siblings with the same tuple shape: `getStraightPath`, `getSmoothStepPath`, `getSimpleBezierPath`. `labelX/labelY` is the geometric center — feed it to `<BaseEdge label=.../>` or to your own `<EdgeLabelRenderer>` content.
 
+**Exact signatures of the sibling path utilities** (all return the same `[path, labelX, labelY, offsetX, offsetY]` tuple):
+
+`getStraightPath` (`system/src/utils/edges/straight-edge.ts:getStraightPath`) — takes **only the four coordinates**, no position/curvature options:
+
+```ts
+export type GetStraightPathParams = {
+  sourceX: number;
+  sourceY: number;
+  targetX: number;
+  targetY: number;
+};
+
+export function getStraightPath({
+  sourceX, sourceY, targetX, targetY,
+}: GetStraightPathParams): [path: string, labelX: number, labelY: number, offsetX: number, offsetY: number]
+```
+
+Its body is just `M ${sourceX},${sourceY}L ${targetX},${targetY}` plus the center from `getEdgeCenter`. Because it ignores `sourcePosition`/`targetPosition`, passing them (as a custom edge naturally would) is harmless but has no effect.
+
+`getSmoothStepPath` (`system/src/utils/edges/smoothstep-edge.ts:getSmoothStepPath`) — orthogonal/stepped routing with rounded corners:
+
+```ts
+export interface GetSmoothStepPathParams {
+  sourceX: number;
+  sourceY: number;
+  sourcePosition?: Position;   // @default Position.Bottom
+  targetX: number;
+  targetY: number;
+  targetPosition?: Position;   // @default Position.Top
+  borderRadius?: number;       // @default 5
+  centerX?: number;
+  centerY?: number;
+  offset?: number;             // @default 20
+  stepPosition?: number;       // bend location: 0 = at source, 1 = at target, 0.5 = midpoint. @default 0.5
+}
+
+export function getSmoothStepPath({
+  sourceX, sourceY, sourcePosition = Position.Bottom,
+  targetX, targetY, targetPosition = Position.Top,
+  borderRadius = 5, centerX, centerY, offset = 20, stepPosition = 0.5,
+}: GetSmoothStepPathParams): [path: string, labelX: number, labelY: number, offsetX: number, offsetY: number]
+```
+
+`borderRadius = 0` makes it a hard-cornered `step` edge (this is exactly how `StepEdge` is built — see §3.6). `offset` is the gap before the first bend; `stepPosition` slides the bend along the dominant axis; `centerX`/`centerY` let you pin the midpoint explicitly. Internally `getPoints` builds the corner list and `getBend` emits each `L…Q…` rounded corner.
+
+`getSimpleBezierPath` (`react/src/components/Edges/SimpleBezierEdge.tsx:getSimpleBezierPath`) — note this one lives in the **React** package, not `@xyflow/system`, and is re-exported from `@xyflow/react`:
+
+```ts
+export interface GetSimpleBezierPathParams {
+  sourceX: number;
+  sourceY: number;
+  sourcePosition?: Position;   // @default Position.Bottom
+  targetX: number;
+  targetY: number;
+  targetPosition?: Position;   // @default Position.Top
+}
+
+export function getSimpleBezierPath({
+  sourceX, sourceY, sourcePosition = Position.Bottom,
+  targetX, targetY, targetPosition = Position.Top,
+}: GetSimpleBezierPathParams): [path: string, labelX: number, labelY: number, offsetX: number, offsetY: number]
+```
+
+Unlike `getBezierPath`, it has **no `curvature` option**. Control points are derived by `getControl` (a fixed 0.5 midpoint on the axis implied by each handle's `Position`), producing a single cubic `M…,… C…,… …,… …,…` whose center comes from `getBezierEdgeCenter`. Built-in type key: `'simplebezier'`.
+
 ### 3.4 `<BaseEdge>` — render the path + interaction zone + label
 
 `<BaseEdge>` (`react/src/components/Edges/BaseEdge.tsx:BaseEdge`) renders the visible path, the invisible interaction path, and an optional label:
@@ -391,7 +456,7 @@ export type XYHandleInstance = {
 
 `getClosestHandle` (`system/src/xyhandle/utils.ts:getClosestHandle`):
 
-- Gathers nodes within `connectionRadius + ADDITIONAL_DISTANCE` (`ADDITIONAL_DISTANCE = 250`) of the pointer (rough broad-phase via `getOverlappingArea`).
+- Gathers nodes within `connectionRadius + ADDITIONAL_DISTANCE` (`ADDITIONAL_DISTANCE = 250`) of the pointer via the local `getNodesWithinDistance` helper (rough broad-phase — internally `getOverlappingArea(rect, nodeToRect(node)) > 0`, `utils.ts:getNodesWithinDistance`).
 - Iterates every handle in each node's `handleBounds.source`/`.target`, **skipping the originating handle** (same `nodeId+type+id`).
 - Computes Euclidean distance from pointer to handle center; discards handles farther than `connectionRadius`.
 - Keeps the minimum-distance handle; on ties, collects all and **prefers the opposite handle type** (`source`→`target`).
@@ -472,7 +537,89 @@ export type ConnectionState<NodeType extends InternalNodeBase = InternalNodeBase
 
 Read it in React via `useConnection()`. `FinalConnectionState` (passed to `onConnectEnd`) is `Omit<ConnectionState,'inProgress'>` — use it to detect "dropped on empty pane" (`toHandle === null`) and, e.g., create a new node there. The initial value is the exported `initialConnection` constant — a `NoConnection` with every field `null` and `inProgress: false` (`system/src/types/general.ts:initialConnection`).
 
-A custom connection line component receives a parallel `ConnectionLineComponentProps` (`react/src/types/edges.ts`) with `fromNode`, `fromHandle`, `fromX/fromY`, `toX/toY`, `connectionStatus: 'valid'|'invalid'|null`, `toHandle`, `toNode`, and `pointer`.
+A custom connection line component receives a parallel `ConnectionLineComponentProps` (`react/src/types/edges.ts`) with `fromNode`, `fromHandle`, `fromX/fromY`, `toX/toY`, `connectionStatus: 'valid'|'invalid'|null`, `toHandle`, `toNode`, and `pointer` — fully detailed in §5.6.
+
+### 5.6 Custom connection line — `connectionLineComponent` & `ConnectionLineWrapper`
+
+The dashed line drawn *while you are dragging* a new connection (before it becomes an edge) is rendered separately from edges, by `ConnectionLineWrapper` (`react/src/components/ConnectionLine/index.tsx:ConnectionLineWrapper`). You override its look via the `<ReactFlow connectionLineComponent>` prop (`react/src/types/component-props.ts:312` → `connectionLineComponent?: ConnectionLineComponent<NodeType>`), which flows `GraphView → ConnectionLineWrapper` as the `component` prop (`GraphView/index.tsx:178` passes `component={connectionLineComponent}`).
+
+**Exact props your component receives** (`react/src/types/edges.ts:ConnectionLineComponentProps`):
+
+```ts
+export type ConnectionLineComponentProps<NodeType extends Node = Node> = {
+  connectionLineStyle?: CSSProperties;
+  connectionLineType: ConnectionLineType;
+  /** The node the connection line originates from. */
+  fromNode: InternalNode<NodeType>;
+  /** The handle on the `fromNode` that the connection line originates from. */
+  fromHandle: Handle;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  fromPosition: Position;
+  toPosition: Position;
+  /**
+   * If there is an `isValidConnection` callback, this prop will be set to `"valid"` or `"invalid"`
+   * based on the return value of that callback. Otherwise, it will be `null`.
+   */
+  connectionStatus: 'valid' | 'invalid' | null;
+  toNode: InternalNode<NodeType> | null;
+  toHandle: Handle | null;
+  pointer: XYPosition;
+};
+
+export type ConnectionLineComponent<NodeType extends Node = Node> = ComponentType<
+  ConnectionLineComponentProps<NodeType>
+>;
+```
+
+**How `ConnectionLineWrapper` renders** (`ConnectionLine/index.tsx`):
+
+1. It subscribes to the store and only renders when `!!(width && nodesConnectable && inProgress)` — i.e. a drag is in progress, the canvas has a width, and connecting is enabled (`renderConnection`). Otherwise it returns `null`.
+2. It draws an outer `<svg className="react-flow__connectionline react-flow__container">` sized to `width`/`height`, wrapping a `<g className={cc(['react-flow__connection', getConnectionStatus(isValid)])}>`. So the `valid`/`invalid` status class is applied to the group, derived from `store.connection.isValid` via `getConnectionStatus`.
+3. Inside, the internal `ConnectionLine` reads the live machine with `useConnection<NodeType>()` and, **if a `CustomComponent` was supplied**, renders it with the mapping below:
+
+```tsx
+<CustomComponent
+  connectionLineType={type}        // from <ReactFlow connectionLineType>
+  connectionLineStyle={style}      // from <ReactFlow connectionLineStyle>
+  fromNode={fromNode}
+  fromHandle={fromHandle}
+  fromX={from.x}  fromY={from.y}
+  toX={to.x}      toY={to.y}
+  fromPosition={fromPosition}
+  toPosition={toPosition}
+  connectionStatus={getConnectionStatus(isValid)}   // 'valid' | 'invalid' | null
+  toNode={toNode}
+  toHandle={toHandle}
+  pointer={pointer}
+/>
+```
+
+   `from.x/from.y` (drag origin in flow coords) become `fromX/fromY`; `to.x/to.y` (current end, which snaps to a handle when valid) become `toX/toY`. `pointer` is the raw, un-snapped pointer position. `connectionStatus` is the string form of `ConnectionState.isValid`.
+
+4. If **no** `CustomComponent` is set, the wrapper instead builds a path itself from `type` (a `ConnectionLineType` — `Bezier`/`SimpleBezier`/`Step`/`SmoothStep`/`Straight`, default `Bezier`) by switching to `getBezierPath` / `getSimpleBezierPath` / `getSmoothStepPath({...,borderRadius:0})` for `Step` / `getSmoothStepPath` for `SmoothStep` / `getStraightPath` (default), then renders a single `<path className="react-flow__connection-path" style={style} />`. Note `Step` is just smoothstep with `borderRadius: 0` here too.
+
+**Minimal custom connection line:** your component returns SVG (it is rendered inside the wrapper's `<g>`), so you typically draw a `<path>` and any end decoration:
+
+```tsx
+import { getStraightPath, type ConnectionLineComponentProps } from '@xyflow/react';
+
+function CustomConnectionLine({ fromX, fromY, toX, toY, connectionStatus }: ConnectionLineComponentProps) {
+  const [path] = getStraightPath({ sourceX: fromX, sourceY: fromY, targetX: toX, targetY: toY });
+  return (
+    <g>
+      <path fill="none" stroke={connectionStatus === 'invalid' ? '#f00' : '#222'} strokeWidth={1.5} d={path} />
+      <circle cx={toX} cy={toY} r={3} fill="#fff" stroke="#222" strokeWidth={1.5} />
+    </g>
+  );
+}
+
+<ReactFlow connectionLineComponent={CustomConnectionLine} />
+```
+
+`fromHandle`/`fromNode` are always set (you can only drag from a real handle); `toHandle`/`toNode` are `null` until the pointer is over a candidate, so guard them. The component lives only for the duration of a drag.
 
 ---
 

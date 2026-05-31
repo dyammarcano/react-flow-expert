@@ -443,6 +443,180 @@ The `SmoothStepPathOptions` type (`packages/system/src/types/edges.ts`) is `{ of
 
 ---
 
+## 5b. React edge-component prop types
+
+The five exported React edge components (`BezierEdge`, `SmoothStepEdge`, `StepEdge`, `StraightEdge`, `SimpleBezierEdge`) are thin `memo` wrappers around the path builders. Their props are **not** the full `EdgeProps` a *custom* edge receives — they are a narrower `EdgeComponentProps`-derived type defined in `packages/react/src/types/edges.ts`. (Note: these `*Props` are distinct from `EdgeProps`, the wrapper props passed into a user's custom edge component.)
+
+### Shared building blocks (verbatim, `packages/react/src/types/edges.ts`)
+
+`EdgeLabelOptions` — the label/label-background fields all edge components share (re-used by `Edge`, `EdgeProps`, `BaseEdgeProps`, `EdgeTextProps`):
+
+```ts
+export type EdgeLabelOptions = {
+  /** The label or custom element to render along the edge. This is commonly a text label or some
+   *  custom controls. */
+  label?: ReactNode;
+  /** Custom styles to apply to the label. */
+  labelStyle?: CSSProperties;
+  labelShowBg?: boolean;
+  labelBgStyle?: CSSProperties;
+  labelBgPadding?: [number, number];
+  labelBgBorderRadius?: number;
+};
+```
+
+`EdgePosition` (imported from `@xyflow/system`, `packages/system/src/types/edges.ts:EdgePosition`) — the six required geometry fields:
+
+```ts
+export type EdgePosition = {
+  sourceX: number;
+  sourceY: number;
+  targetX: number;
+  targetY: number;
+  sourcePosition: Position;
+  targetPosition: Position;
+};
+```
+
+`EdgeComponentProps` — the common base for the exported edge components:
+
+```ts
+export type EdgeComponentProps = EdgePosition &
+  EdgeLabelOptions & {
+    id?: EdgeProps['id'];
+    markerStart?: EdgeProps['markerStart'];   // string (already-resolved url('#...'))
+    markerEnd?: EdgeProps['markerEnd'];        // string
+    interactionWidth?: EdgeProps['interactionWidth'];  // number
+    style?: EdgeProps['style'];                // CSSProperties
+    sourceHandleId?: EdgeProps['sourceHandleId'];      // string | null
+    targetHandleId?: EdgeProps['targetHandleId'];      // string | null
+  };
+
+export type EdgeComponentWithPathOptions<PathOptions> = EdgeComponentProps & {
+  pathOptions?: PathOptions;
+};
+```
+
+Because `markerStart`/`markerEnd` here are typed `EdgeProps['markerStart']` = `string` (see `EdgeProps` below), the value an edge component receives is the **already-resolved** `url('#…')` string produced by `EdgeWrapper` (Section 7.3), not the original `EdgeMarker` config.
+
+### The five exported prop types (verbatim)
+
+```ts
+/** BezierEdge component props */
+export type BezierEdgeProps = EdgeComponentWithPathOptions<BezierPathOptions>;
+
+/** SmoothStepEdge component props */
+export type SmoothStepEdgeProps = EdgeComponentWithPathOptions<SmoothStepPathOptions>;
+
+/** StepEdge component props */
+export type StepEdgeProps = EdgeComponentWithPathOptions<StepPathOptions>;
+
+/** StraightEdge component props */
+export type StraightEdgeProps = Omit<EdgeComponentProps, 'sourcePosition' | 'targetPosition'>;
+
+/** SimpleBezier component props */
+export type SimpleBezierEdgeProps = EdgeComponentProps;
+```
+
+| Component | Prop type | `pathOptions` type | Notes |
+|-----------|-----------|--------------------|-------|
+| `BezierEdge` | `BezierEdgeProps` | `BezierPathOptions` = `{ curvature?: number }` | full `EdgeComponentProps` + `pathOptions`. |
+| `SmoothStepEdge` | `SmoothStepEdgeProps` | `SmoothStepPathOptions` = `{ offset?; borderRadius?; stepPosition? }` | full `EdgeComponentProps` + `pathOptions`. |
+| `StepEdge` | `StepEdgeProps` | `StepPathOptions` = `{ offset?: number }` | wrapper forces `borderRadius: 0` (Section 5). |
+| `StraightEdge` | `StraightEdgeProps` | — (no `pathOptions`) | **`sourcePosition`/`targetPosition` removed** via `Omit` — a straight line ignores handle sides. |
+| `SimpleBezierEdge` | `SimpleBezierEdgeProps` | — (no `pathOptions`) | plain `EdgeComponentProps`; no curvature knob. |
+
+Key takeaways: only the three step/bezier components carry `pathOptions`; `StraightEdge` is the only one that drops `sourcePosition`/`targetPosition` (matching its builder, which has no position params — Section 2); `SimpleBezierEdge` and `StraightEdge` are bare `EdgeComponentProps` aliases.
+
+### `EdgeProps` vs these — the distinction
+
+`EdgeProps` (the props your **custom** edge function receives) is a different, richer type:
+
+```ts
+export type EdgeProps<EdgeType extends Edge = Edge> = Pick<
+  EdgeType,
+  'id' | 'type' | 'animated' | 'data' | 'style' | 'selected' | 'source' | 'target' | 'selectable' | 'deletable'
+> &
+  EdgePosition &
+  EdgeLabelOptions & {
+    sourceHandleId?: string | null;
+    targetHandleId?: string | null;
+    markerStart?: string;
+    markerEnd?: string;
+    pathOptions?: any;   // @TODO: how can we get better types for pathOptions?
+    interactionWidth?: number;
+  };
+```
+
+So a custom edge additionally gets `type`, `animated`, `data`, `selected`, `source`, `target`, `selectable`, `deletable` — none of which the built-in exported edge components expose, and `pathOptions` is loosely typed `any`.
+
+---
+
+## 5c. `EdgeText` component — props & label-background defaults
+
+File: `packages/react/src/components/Edges/EdgeText.tsx:EdgeText` (exported `memo(EdgeTextComponent)`). Helper for rendering a label + background `<rect>` inside a custom edge.
+
+### Props type (verbatim, `packages/react/src/types/edges.ts:EdgeTextProps`)
+
+```ts
+export type EdgeTextProps = Omit<SVGAttributes<SVGElement>, 'x' | 'y'> &
+  EdgeLabelOptions & {
+    /** The x position where the label should be rendered. */
+    x: number;
+    /** The y position where the label should be rendered. */
+    y: number;
+  };
+```
+
+So `EdgeTextProps` = `EdgeLabelOptions` (`label`, `labelStyle`, `labelShowBg`, `labelBgStyle`, `labelBgPadding`, `labelBgBorderRadius`) **plus required** `x`/`y`, plus any passthrough `SVGAttributes` (minus `x`/`y`).
+
+### Default values applied in the component (verbatim destructure)
+
+```ts
+function EdgeTextComponent({
+  x,
+  y,
+  label,
+  labelStyle,
+  labelShowBg = true,
+  labelBgStyle,
+  labelBgPadding = [2, 4],
+  labelBgBorderRadius = 2,
+  children,
+  className,
+  ...rest
+}: EdgeTextProps) {
+```
+
+| Prop | Default | Effect |
+|------|---------|--------|
+| `labelShowBg` | `true` | Whether the background `<rect>` is rendered at all. |
+| `labelBgPadding` | `[2, 4]` | `[xPad, yPad]`. Rect width = `textWidth + 2*labelBgPadding[0]`, height = `textHeight + 2*labelBgPadding[1]`; rect is offset `x={-labelBgPadding[0]}`, `y={-labelBgPadding[1]}`. |
+| `labelBgBorderRadius` | `2` | Applied to both `rx` and `ry` of the background rect. |
+| `labelBgStyle` | `undefined` | Spread onto the rect's `style` (e.g. `{ fill: 'red' }`). |
+| `labelStyle` | `undefined` | Spread onto the `<text>` element's `style`. |
+
+These same six label props (with the **same** defaults) are threaded through every built-in edge component → `BaseEdge` → `EdgeText`. The built-in edge components (`BezierEdge`, etc.) pass `label`, `labelStyle`, `labelShowBg`, `labelBgStyle`, `labelBgPadding`, `labelBgBorderRadius` straight through to `BaseEdge` without supplying their own defaults — the defaults above are the single source of truth.
+
+Render structure (verbatim): the component returns a `<g transform="translate(x - bboxW/2, y - bboxH/2)">` wrapper; when `labelShowBg` is true it renders:
+
+```tsx
+<rect
+  width={edgeTextBbox.width + 2 * labelBgPadding[0]}
+  x={-labelBgPadding[0]}
+  y={-labelBgPadding[1]}
+  height={edgeTextBbox.height + 2 * labelBgPadding[1]}
+  className="react-flow__edge-textbg"
+  style={labelBgStyle}
+  rx={labelBgBorderRadius}
+  ry={labelBgBorderRadius}
+/>
+```
+
+followed by `<text className="react-flow__edge-text" y={bboxH/2} dy="0.3em" style={labelStyle}>`. If `label` is falsy the component returns `null` (renders nothing).
+
+---
+
 ## 6. Label-center helpers
 
 ### `getEdgeCenter` — geometric midpoint

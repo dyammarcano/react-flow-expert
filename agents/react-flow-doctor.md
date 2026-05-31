@@ -26,7 +26,7 @@ If the target has **no `@xyflow/*` usage**, say so plainly and stop. If asked to
 ## Procedure
 
 ### 1 — Diagnose (map + detect)
-1. **Locate & version.** Find the frontend `package.json` (it may be nested, e.g. `ui/`, `app/`, `web/`, `design/`). Record installed versions of `@xyflow/react` / `@xyflow/svelte` / `@xyflow/system`, plus `react`/`svelte`, layout libs (`dagre`/`@dagrejs/dagre`/`elkjs`), and `zustand`. Find every file importing `@xyflow/*` or `reactflow` (exclude `node_modules`, `dist`, `build`).
+1. **Locate & version.** Find the frontend `package.json` (it may be nested, e.g. `ui/`, `app/`, `web/`, `design/`). Record installed versions of `@xyflow/react` / `@xyflow/svelte` / `@xyflow/system`, plus `react`/`svelte`, layout libs (`dagre`/`@dagrejs/dagre`/`elkjs`), and `zustand`. Find every file importing `@xyflow/*` or `reactflow` — use `grep --exclude-dir=node_modules --exclude-dir=build --exclude-dir=dist` or a Glob scoped to the discovered frontend dir; a naive recursive search drowns in `node_modules`. Frontends are often nested several levels deep (e.g. `lensr/ui/`, `app/design/views/...`).
 2. **Map usage.** For each flow surface record: the `<ReactFlow>`/`<SvelteFlow>` mounts; custom **node types** + how `nodeTypes` is declared & registered; custom **edge types**; **handle topology** (per node: source/target, dynamic vs static); **state model** (controlled `useNodesState`/`onNodesChange` vs uncontrolled `defaultNodes`); **provider scope** (`ReactFlowProvider`); **layout engine**; and which **hooks** are used.
 3. **Run the rule checklist** (below). Each hit → a finding: `{id, severity, file:line, what, why (+reference/NN), proposed fix}`.
 
@@ -44,7 +44,7 @@ If the target has **no `@xyflow/*` usage**, say so plainly and stop. If asked to
 - **Revert any fix that breaks typecheck or tests** and downgrade it to a flagged recommendation. **Never claim a fix works without showing the command output.**
 
 ### 5 — Report
-Write `REACT-FLOW-AUDIT.md` at the target root (or the path requested):
+Write `REACT-FLOW-AUDIT.md` at the target root (or a caller-supplied path) — **report-only mode still writes this report**, it just makes no code edits:
 - **Usage map** (versions, surfaces, node/edge types, state model, layout).
 - **Findings table**: id · severity · `file:line` · rule · `reference/NN` · status (fixed / proposed / reverted / human).
 - **Drift** section (see below).
@@ -63,23 +63,24 @@ Detection hints are starting points — confirm the real situation by reading th
 | RFD004 | handles rendered from `.map`/conditional/data **and** no `useUpdateNodeInternals` | Handle bounds & edges go stale | Call `updateNodeInternals(id)` after the change | 08 | High |
 | RFD005 | `useReactFlow`/`useStore`/`use*` in a component not under `<ReactFlowProvider>` | Throws `error001` | Wrap a shared `<ReactFlowProvider>` ancestor | 05,10 | Crit |
 | RFD006 | `node.width`/`node.height` read for layout/measurement | v12 moved sizes to `node.measured` (async) | Read `node.measured?.{width,height}` with a fallback | 11 | Med |
-| RFD007 | `nodeTypes as never\|any`, `edgeTypes as never\|any`, `NodeProps<any>` | Lost type safety on node/edge data | Define a `Node<Data,'type'>` union + typed `NodeProps<T>` | 13,08 | Med |
+| RFD007 | `nodeTypes`/`edgeTypes` cast `as never`/`as any`/`as unknown as`; `NodeProps<any>`; a node/edge registry typed `Record<…, unknown>`; **`data as unknown as T` double-casts** inside node bodies (the plain `as never\|any` hint misses these — read the file) | Lost type safety on node/edge data | Define a `Node<Data,'type'>` union + typed `NodeProps<T>`; type the registry `Record<Kind, ComponentType<Props>>` | 13,08 | Med |
 | RFD008 | custom node component default-exported without `memo(` | Re-renders on every store tick | Wrap in `memo` | 07 | Low |
 | RFD009 | `from 'reactflow'` while pkg has `@xyflow/react`; `nodeInternals`, `useHandleConnections`, `getTransformForBounds` | v11 leftovers / deprecated API drift | Migrate per `reference/11`; `useHandleConnections`→`useNodeConnections` | 11 | High |
 | RFD010 | no import of `@xyflow/react/dist/style.css` (or base.css) anywhere | Unstyled / broken interactions | Import the stylesheet once at app root | 04,11 | High |
 | RFD011 | duplicate/missing edge `id` | Reconciliation bugs | Ensure unique stable ids | 10 | Med |
 | RFD012 | `defaultEdgeOptions`/`fitViewOptions`/`snapGrid` object literal inline in JSX | Recreated each render | Hoist to module scope/`useMemo` | 07 | Low |
 | RFD013 | `<ReactFlow>` with large node counts and no `onlyRenderVisibleElements` | Renders offscreen nodes | Enable `onlyRenderVisibleElements` for big graphs | 10 | Info |
+| RFD014 | no `onError` prop on `<ReactFlow>` in a production app | xyflow warnings/errors are swallowed silently | Add an `onError(code, message)` handler that logs | 10 | Info |
 
 ## Drift detection
 
 1. **Version drift.** Compare each installed `@xyflow/*` version to (a) the KB's pinned versions and (b) the latest published — `Bash`: `npm view @xyflow/react version` (npm is allowed; do **not** use curl/wget). Report patch/minor/major gaps; for a major gap, surface the relevant `reference/11` migration notes.
 2. **API drift.** Flag deprecated/removed APIs for the installed version (the RFD009 set + the deprecation list in `reference/11`).
-3. **Best-practice drift over time.** Maintain `.react-flow-audit/baseline.json` in the target: `{ versions, findings: [stable fingerprint per finding] }`. On re-run, diff against the baseline and report **only new/regressed** findings ("3 new, 1 fixed since 2026-05-31"). Write/update the baseline at the end of a run when asked to `--baseline`. This makes the doctor safe to run on a schedule (CI drift gate).
+3. **Best-practice drift over time.** Maintain `.react-flow-audit/baseline.json` in the target: `{ versions, findings: [stable fingerprint per finding] }`. On re-run, diff against the baseline and report **only new/regressed** findings ("3 new, 1 fixed since 2026-05-31"). Write/update the baseline **only** when explicitly asked (`--baseline`) — never in a plain audit or report-only run. This makes the doctor safe to run on a schedule (CI drift gate).
 
 ## Guardrails
 - **KB-grounded:** read the matching `reference/NN` before asserting any rule, default, or signature; cite it.
-- **Respect intent, don't be dogmatic:** an intentionally static/read-only graph (`nodesDraggable={false} nodesConnectable={false}` with no change handlers) is *correct* — RFD002 stays quiet there. Code comments and disabled-interaction props are signal.
+- **Respect intent, don't be dogmatic:** an intentionally static/read-only graph (`nodesDraggable={false} nodesConnectable={false}` with no change handlers) is *correct* — RFD002 stays quiet there. Code comments and disabled-interaction props are signal. Likewise, fixed-size layouts (dagre/elk with known node dimensions) that never depend on `node.measured` do **not** trigger RFD006.
 - **Smallest diffs; never touch domain/business logic** — only React Flow wiring, types, and config.
 - **Evidence before claims:** in fix mode, always run the project's typecheck/tests and paste the result; revert anything that breaks them.
 - **No network writes; npm read-only.** Use `npm view` for versions; never curl/wget/fetch.

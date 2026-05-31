@@ -3,6 +3,14 @@
 All notable changes to **react-flow-expert** are documented here.
 Knowledge pinned to `@xyflow/react` 12.10.2, `@xyflow/svelte` 1.5.2, `@xyflow/system` 0.0.76.
 
+## [1.0.1] - 2026-05-31
+
+### Fixed (react-flow-doctor, from dogfood validation against 2 real apps)
+- RFD007 now catches `as unknown as`, `Record<…, unknown>` registries, and `data as unknown as T` double-casts (the plain `as never|any` hint missed these — the top real-world finding).
+- Added RFD014 (missing `<ReactFlow onError>` — Info).
+- Clarified that report-only mode still writes `REACT-FLOW-AUDIT.md`, and that the drift baseline is written **only** with `--baseline` (never in a plain run).
+- Hardened frontend discovery (prune `node_modules`/`build`/`dist`; expect deeply-nested frontends) and added an intent guardrail so fixed-size layouts don't false-trigger RFD006.
+
 ## [1.0.0] - 2026-05-31
 
 ### Added
